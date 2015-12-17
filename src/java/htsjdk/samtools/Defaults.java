@@ -9,6 +9,9 @@ import java.io.File;
  * @author Tim Fennell
  */
 public class Defaults {
+    /** Determined the mode of SortingCollection class initialization (Multithread or singlethread)*/
+    public static final boolean MULTITHREAD_SORTING_COLLECTION;
+
     /** Should BAM index files be created when writing out coordinate sorted BAM files?  Default = false. */
     public static final boolean CREATE_INDEX;
 
@@ -67,6 +70,7 @@ public class Defaults {
 
 
     static {
+        MULTITHREAD_SORTING_COLLECTION = getBooleanProperty("multithread_sort_col", false);
         CREATE_INDEX = getBooleanProperty("create_index", false);
         CREATE_MD5 = getBooleanProperty("create_md5", false);
         USE_ASYNC_IO = getBooleanProperty("use_async_io", false);

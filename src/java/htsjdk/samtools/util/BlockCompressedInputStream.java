@@ -24,22 +24,19 @@
 package htsjdk.samtools.util;
 
 
+import java.io.*;
+import java.net.URL;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.Arrays;
+import java.util.concurrent.*;
+
 import htsjdk.samtools.FileTruncatedException;
 import htsjdk.samtools.SAMException;
 import htsjdk.samtools.seekablestream.SeekableBufferedStream;
 import htsjdk.samtools.seekablestream.SeekableFileStream;
 import htsjdk.samtools.seekablestream.SeekableHTTPStream;
 import htsjdk.samtools.seekablestream.SeekableStream;
-
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.RandomAccessFile;
-import java.net.URL;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.util.Arrays;
 
 /*
  * Utility class for reading BGZF block compressed files.  The caller can treat this file like any other InputStream.
@@ -59,18 +56,24 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
     private int mLastBlockLength = 0;
     private final BlockGunzipper blockGunzipper = new BlockGunzipper();
 
+    private BlockReader mReader;
+
 
     /**
      * Note that seek() is not supported if this ctor is used.
      */
     public BlockCompressedInputStream(final InputStream stream) {
-        this(stream, true);
+        this(stream, true, false);
+    }
+
+    public BlockCompressedInputStream(final InputStream stream, final boolean allowBuffering) {
+        this(stream, allowBuffering, false);
     }
 
     /**
      * Note that seek() is not supported if this ctor is used.
      */
-    public BlockCompressedInputStream(final InputStream stream, final boolean allowBuffering) {
+    public BlockCompressedInputStream(final InputStream stream, final boolean allowBuffering, final boolean async) {
         if (allowBuffering) {
             mStream = IOUtil.toBufferedStream(stream);
         }
@@ -79,21 +82,39 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
         }
 
         mFile = null;
+
+        initReader(async);
+
+    }
+
+    public BlockCompressedInputStream(final File file)
+            throws IOException {
+        this(file, false);
     }
 
     /**
      * Use this ctor if you wish to call seek()
      */
-    public BlockCompressedInputStream(final File file)
+    public BlockCompressedInputStream(final File file, final boolean async)
         throws IOException {
         mFile = new SeekableFileStream(file);
         mStream = null;
 
+        initReader(async);
+
+
     }
 
     public BlockCompressedInputStream(final URL url) {
+        this(url, false);
+    }
+
+    public BlockCompressedInputStream(final URL url, boolean async) {
         mFile = new SeekableBufferedStream(new SeekableHTTPStream(url));
         mStream = null;
+
+        initReader(async);
+
     }
 
     /**
@@ -101,9 +122,17 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
      * provided, so if the underlying source is not buffered, wrap it in a
      * SeekableBufferedStream before passing to this ctor.
      */
+
     public BlockCompressedInputStream(final SeekableStream strm) {
+        this(strm, false);
+    }
+
+    public BlockCompressedInputStream(final SeekableStream strm, boolean async) {
         mFile = strm;
         mStream = null;
+
+        initReader(async);
+
     }
 
     /**
@@ -121,6 +150,7 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
      * Note that although the next caller can read this many bytes without blocking, the available() method call itself
      * may block in order to fill an internal buffer if it has been exhausted.
      */
+    @Override
     public int available()
         throws IOException {
         if (mCurrentBlock == null || mCurrentOffset == mCurrentBlock.length) {
@@ -135,6 +165,7 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
     /**
      * Closes the underlying InputStream or RandomAccessFile
      */
+    @Override
     public void close()
         throws IOException {
         if (mFile != null) {
@@ -147,6 +178,8 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
         // Encourage garbage collection
         mFileBuffer = null;
         mCurrentBlock = null;
+
+        mReader.close();
     }
 
     /**
@@ -156,6 +189,7 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
 
      * @return the next byte of data, or -1 if the end of the stream is reached.
      */
+    @Override
     public int read()
         throws IOException {
         return (available() > 0) ? (mCurrentBlock[mCurrentOffset++] & 0xFF) : -1;
@@ -172,6 +206,7 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
      * @return the total number of bytes read into the buffer, or -1 is there is no more data because the end of
      * the stream has been reached.
      */
+    @Override
     public int read(final byte[] buffer)
         throws IOException {
         return read(buffer, 0, buffer.length);
@@ -180,9 +215,9 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
     private volatile ByteArrayOutputStream buf = null;
     private static final byte eol = '\n';
     private static final byte eolCr = '\r';
-    
+
     /**
-     * Reads a whole line. A line is considered to be terminated by either a line feed ('\n'), 
+     * Reads a whole line. A line is considered to be terminated by either a line feed ('\n'),
      * carriage return ('\r') or carriage return followed by a line feed ("\r\n").
      *
      * @return  A String containing the contents of the line, excluding the line terminating
@@ -196,7 +231,7 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
         if (available == 0) {
             return null;
         }
-        if(null == buf){ // lazy initialisation 
+        if(null == buf){ // lazy initialisation
         	buf = new ByteArrayOutputStream(8192);
         }
         buf.reset();
@@ -224,7 +259,7 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
 				buf.write(mCurrentBlock, mCurrentOffset, bCnt);
 	        	mCurrentOffset = linetmpPos;
         	}
-        	available = available();    
+        	available = available();
         	if(available == 0){
         		// EOF
         		done = true;
@@ -245,6 +280,7 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
      * @return the total number of bytes read into the buffer, or -1 if there is no more data because the end of
      * the stream has been reached.
      */
+    @Override
     public int read(final byte[] buffer, int offset, int length)
         throws IOException {
         final int originalLength = length;
@@ -274,7 +310,7 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
      */
     public void seek(final long pos)
         throws IOException {
-        if (mFile == null) {
+        if (!isSeekable()) {
             throw new IOException("Cannot seek on stream based file");
         }
         // Decode virtual file pointer
@@ -286,9 +322,7 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
         if (mBlockAddress == compressedOffset && mCurrentBlock != null) {
             available = mCurrentBlock.length;
         } else {
-            mFile.seek(compressedOffset);
-            mBlockAddress = compressedOffset;
-            mLastBlockLength = 0;
+            mReader.seek(compressedOffset);
             readBlock();
             available = available();
         }
@@ -299,6 +333,25 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
         mCurrentOffset = uncompressedOffset;
     }
 
+    private void doSeek(final long offset) throws IOException {
+        mFile.seek(offset);
+        mBlockAddress = offset;
+        mLastBlockLength = 0;
+    }
+
+    private boolean isSeekable() {
+        return mFile != null;
+    }
+
+
+    private void initReader(boolean async) {
+        if (async) {
+            mReader = new AsyncTwoPhaseBlockReader(this);
+        } else {
+            mReader = new Reader(this);
+        }
+    }
+
     private boolean eof() throws IOException {
         if (mFile.eof()) {
             return true;
@@ -306,6 +359,7 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
         // If the last remaining block is the size of the EMPTY_GZIP_BLOCK, this is the same as being at EOF.
         return (mFile.length() - (mBlockAddress + mLastBlockLength) == BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK.length);
     }
+
 
     /**
      * @return virtual file pointer that can be passed to seek() to return to the current position.  This is
@@ -329,7 +383,7 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
     public static long getFileBlock(final long bgzfOffset) {
         return BlockCompressedFilePointerUtil.getBlockAddress(bgzfOffset);
     }
-    
+
     /**
      * @param stream Must be at start of file.  Throws RuntimeException if !stream.markSupported().
      * @return true if the given file looks like a valid BGZF file.
@@ -356,51 +410,72 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
     }
 
     private void readBlock()
-        throws IOException {
+            throws IOException {
 
-        if (mFileBuffer == null) {
-            mFileBuffer = new byte[BlockCompressedStreamConstants.MAX_COMPRESSED_BLOCK_SIZE];
-        }
-        int count = readBytes(mFileBuffer, 0, BlockCompressedStreamConstants.BLOCK_HEADER_LENGTH);
-        if (count == 0) {
+        Block block = mReader.readBlock();
+        if (block.length == 0) {
             // Handle case where there is no empty gzip block at end.
             mCurrentOffset = 0;
             mBlockAddress += mLastBlockLength;
             mCurrentBlock = new byte[0];
+
             return;
         }
+        mCurrentBlock = block.buffer;
+
+        mCurrentOffset = 0;
+        mBlockAddress += mLastBlockLength;
+        mLastBlockLength = block.length;
+    }
+
+    private Block readAndInflateBlock() throws IOException {
+        Block fileBuffer = readNotInflatedBlock();
+        if (fileBuffer.length == 0)
+            return fileBuffer;
+
+        fileBuffer.buffer = inflateBlock(fileBuffer.buffer, fileBuffer.length);
+        return fileBuffer;
+    }
+
+    private Block readNotInflatedBlock() throws IOException {
+        Block fileBuffer = new Block();
+        int count = readBytes(mFileBuffer, 0, BlockCompressedStreamConstants.BLOCK_HEADER_LENGTH);
+        if (count == 0) {
+            return fileBuffer;
+        }
+
         if (count != BlockCompressedStreamConstants.BLOCK_HEADER_LENGTH) {
             throw new IOException("Premature end of file");
         }
-        final int blockLength = unpackInt16(mFileBuffer, BlockCompressedStreamConstants.BLOCK_LENGTH_OFFSET) + 1;
-        if (blockLength < BlockCompressedStreamConstants.BLOCK_HEADER_LENGTH || blockLength > mFileBuffer.length) {
-            throw new IOException("Unexpected compressed block length: " + blockLength);
+
+        fileBuffer.length = unpackInt16(mFileBuffer, BlockCompressedStreamConstants.BLOCK_LENGTH_OFFSET) + 1;
+        if (fileBuffer.length < BlockCompressedStreamConstants.BLOCK_HEADER_LENGTH || fileBuffer.length > mFileBuffer.length) {
+            throw new IOException("Unexpected compressed block length: " + fileBuffer.length);
         }
-        final int remaining = blockLength - BlockCompressedStreamConstants.BLOCK_HEADER_LENGTH;
+        final int remaining = fileBuffer.length - BlockCompressedStreamConstants.BLOCK_HEADER_LENGTH;
         count = readBytes(mFileBuffer, BlockCompressedStreamConstants.BLOCK_HEADER_LENGTH, remaining);
         if (count != remaining) {
             throw new FileTruncatedException("Premature end of file");
         }
-        inflateBlock(mFileBuffer, blockLength);
-        mCurrentOffset = 0;
-        mBlockAddress += mLastBlockLength;
-        mLastBlockLength = blockLength;
+        fileBuffer.buffer = mFileBuffer;
+        return fileBuffer;
     }
 
-    private void inflateBlock(final byte[] compressedBlock, final int compressedLength)
-        throws IOException {
-        final int uncompressedLength = unpackInt32(compressedBlock, compressedLength-4);
-        byte[] buffer = mCurrentBlock;
-        mCurrentBlock = null;
-        if (buffer == null || buffer.length != uncompressedLength) {
-            try {
-                buffer = new byte[uncompressedLength];
-            } catch (final NegativeArraySizeException e) {
-                throw new RuntimeIOException("BGZF file has invalid uncompressedLength: " + uncompressedLength, e);
-            }
+    private byte[] inflateBlock(final byte[] compressedBlock, final int compressedLength, BlockGunzipper gunzipper) {
+        final int uncompressedLength = unpackInt32(compressedBlock, compressedLength - 4);
+        try {
+            byte[] buffer = new byte[uncompressedLength];
+            gunzipper.unzipBlock(buffer, compressedBlock, compressedLength);
+            return buffer;
+        } catch (final NegativeArraySizeException e) {
+            throw new RuntimeIOException("BGZF file has invalid uncompressedLength: " + uncompressedLength, e);
         }
-        blockGunzipper.unzipBlock(buffer, compressedBlock, compressedLength);
-        mCurrentBlock = buffer;
+
+    }
+
+    private byte[] inflateBlock(final byte[] compressedBlock, final int compressedLength)
+            throws IOException {
+        return inflateBlock(compressedBlock, compressedLength, blockGunzipper);
     }
 
     private int readBytes(final byte[] buffer, final int offset, final int length)
@@ -440,12 +515,12 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
         return bytesRead;
     }
 
-    private int unpackInt16(final byte[] buffer, final int offset) {
+    private static final int unpackInt16(final byte[] buffer, final int offset) {
         return ((buffer[offset] & 0xFF) |
                 ((buffer[offset+1] & 0xFF) << 8));
     }
 
-    private int unpackInt32(final byte[] buffer, final int offset) {
+    private static final int unpackInt32(final byte[] buffer, final int offset) {
         return ((buffer[offset] & 0xFF) |
                 ((buffer[offset+1] & 0xFF) << 8) |
                 ((buffer[offset+2] & 0xFF) << 16) |
@@ -507,6 +582,266 @@ public class BlockCompressedInputStream extends InputStream implements LocationA
         }
         return true;
     }
+
+
+    private static class AsyncTwoPhaseBlockReader implements BlockReader {
+        private static final Block SKIP = new Block();
+
+        private final BlockCompressedInputStream is;
+        private final ExecutorService es = new ThreadPoolExecutor(0, 2,
+                0, TimeUnit.SECONDS,
+                new SynchronousQueue<Runnable>());
+
+
+        private volatile Runnable op1 = NOP;
+        private volatile Runnable op2 = NOP;
+
+        private volatile long offset;
+
+        private final Runnable seek = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    barrier.await();
+                    is.doSeek(offset);
+                    op1 = NOP;
+                    op2 = NOP;
+                    poolIndex = 0;
+                    readBlocks.clear();
+                    barrier.await();
+                } catch (InterruptedException e) {
+                    throw new RuntimeIOException(e);
+                } catch (BrokenBarrierException e) {
+                    throw new RuntimeIOException(e);
+                } catch (IOException e) {
+                    throw new RuntimeIOException(e);
+                }
+            }
+        };
+
+        private final Runnable stopInflate = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    barrier.await();
+                    inflatedBlocks.clear();
+                    barrier.await();
+                } catch (InterruptedException e) {
+                    throw new RuntimeIOException(e);
+                } catch (BrokenBarrierException e) {
+                    throw new RuntimeIOException(e);
+                }
+            }
+        };
+
+        private final BlockingQueue<Block> readBlocks = new LinkedBlockingQueue<Block>(3);
+        private final BlockingQueue<Block> inflatedBlocks = new LinkedBlockingQueue<Block>(3);
+        private final byte[][] buffersPool = new byte[readBlocks.remainingCapacity() + 2][];
+        int poolIndex = 0;
+
+        private final CyclicBarrier barrier = new CyclicBarrier(3);
+        Future<?> reader;
+        Future<?> inflater;
+
+        public AsyncTwoPhaseBlockReader(BlockCompressedInputStream input) {
+            this.is = input;
+            reader = es.submit(new Runnable() {
+                @Override
+                public void run() {
+                    BlockGunzipper gunzipper = new BlockGunzipper();
+                    Thread.currentThread().setName("BCIS-reader");
+                    try {
+                        while (true) {
+                            op1.run();
+                            if (buffersPool[poolIndex] == null) {
+                                buffersPool[poolIndex] = new byte[BlockCompressedStreamConstants.MAX_COMPRESSED_BLOCK_SIZE];
+                            }
+                            is.mFileBuffer = buffersPool[poolIndex];
+                            Block block = is.readNotInflatedBlock();
+                            if (!readBlocks.offer(block)) {
+                                if(block.length != 0) {
+                                    block.buffer = is.inflateBlock(block.buffer, block.length, gunzipper);
+                                    block.isInflated = true;
+                                } else {
+                                    poolIndex = (poolIndex + 1) % buffersPool.length;
+                                }
+                                readBlocks.put(block);
+                            } else {
+                                poolIndex = (poolIndex + 1) % buffersPool.length;
+                            }
+                            if(block.length == 0) {
+                                if (is.isSeekable())
+                                    continue;
+                                else
+                                    break;
+                            }
+                        }
+                    } catch (InterruptedException e) {
+                        throw new RuntimeIOException(e);
+                    } catch (IOException e) {
+                        throw new RuntimeIOException(e);
+                    }
+                }
+            });
+            inflater = es.submit(new Runnable() {
+                @Override
+                public void run() {
+                    Thread.currentThread().setName("BCIS-inflater");
+                    try {
+                        while (true) {
+                            op2.run();
+                            Block block = readBlocks.take();
+                            if (block == SKIP) {
+                                continue;
+                            }
+                            if(block.length == 0) {
+                                inflatedBlocks.put(block);
+                                if (is.isSeekable())
+                                    continue;
+                                else
+                                    break;
+                            }
+                            if (!block.isInflated) {
+                                block.buffer = is.inflateBlock(block.buffer, block.length);
+                                block.isInflated = true;
+                            }
+                            inflatedBlocks.put(block);
+                        }
+                    } catch (InterruptedException e) {
+                        throw new RuntimeIOException(e);
+                    } catch (IOException e) {
+                        throw new RuntimeIOException(e);
+                    }
+                }
+            });
+        }
+
+        private void checkWorkers() throws InterruptedException, ExecutionException {
+            if(reader.isDone()) {
+                reader.get(); //throw exception
+            }
+            if(inflater.isDone()) {
+                inflater.get(); //throw exception
+            }
+        }
+
+        @Override
+        public void seek(final long offset)  throws IOException {
+            try {
+                pauseRead();
+                pauseInflate();
+
+                this.offset = offset;
+
+                startSeek();
+
+                awaitDoneSeek();
+            } catch (InterruptedException e) {
+                throw new IOException(e);
+            } catch (BrokenBarrierException e) {
+                throw new IOException(e);
+            }
+        }
+
+        private int awaitDoneSeek() throws InterruptedException, BrokenBarrierException {
+            return barrier.await();
+        }
+
+        private int startSeek() throws InterruptedException, BrokenBarrierException {
+            return barrier.await();
+        }
+
+        private void pauseInflate() throws InterruptedException {
+            op2 = stopInflate;
+            readBlocks.put(SKIP);
+            inflatedBlocks.clear();
+        }
+
+        private void pauseRead() {
+            op1 = seek;
+            readBlocks.clear();
+        }
+
+
+        @Override
+        public Block readBlock() throws IOException {
+            try {
+                Block block = inflatedBlocks.poll(20, TimeUnit.SECONDS);
+                if (block == null) {
+                    checkWorkers();
+                    block = inflatedBlocks.take();
+                }
+                return block;
+            } catch (InterruptedException e) {
+                throw new IOException(e);
+            } catch (ExecutionException e) {
+                throw new IOException(e);
+            }
+        }
+
+
+
+        @Override
+        public void close() {
+            es.shutdownNow();
+            Arrays.fill(buffersPool, null);
+            readBlocks.clear();
+            inflatedBlocks.clear();;
+        }
+    }
+
+    private static final class Reader implements BlockReader {
+
+        final BlockCompressedInputStream is;
+
+
+
+        public Reader(BlockCompressedInputStream is) {
+            this.is = is;
+        }
+
+        @Override
+        public Block readBlock() throws IOException {
+            if (is.mFileBuffer == null) {
+                is.mFileBuffer = new byte[BlockCompressedStreamConstants.MAX_COMPRESSED_BLOCK_SIZE];
+            }
+            return is.readAndInflateBlock();
+        }
+
+        @Override
+        public void close() {
+            //no-op
+        }
+
+        @Override
+        public void seek(long offset) throws IOException {
+            is.doSeek(offset);
+
+        }
+
+    }
+
+    private interface BlockReader {
+        static final Runnable NOP = new Runnable() {
+            @Override
+            public void run() {
+            }
+        };
+
+        Block readBlock() throws IOException;
+
+        void close();
+
+        void seek(long offset) throws IOException;
+
+    }
+
+    private static class Block {
+        boolean isInflated;
+        byte[] buffer;
+        int length;
+    }
+
 }
 
 

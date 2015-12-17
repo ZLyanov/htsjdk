@@ -52,7 +52,7 @@ import htsjdk.samtools.util.RuntimeIOException;
 public abstract class SamReaderFactory {
 
     private static ValidationStringency defaultValidationStringency = ValidationStringency.DEFAULT_STRINGENCY;
-    
+
     abstract public SamReader open(final File file);
 
     abstract public SamReader open(final SamInputResource resource);
@@ -84,6 +84,10 @@ public abstract class SamReaderFactory {
 
     /** Reapplies any changed options to the reader * */
     abstract public void reapplyOptions(SamReader reader);
+
+    abstract public SamReaderFactory async(boolean value);
+
+    abstract public SamReaderFactory async();
 
     /** Set this factory's {@link ValidationStringency} to the provided one, then returns itself. */
     abstract public SamReaderFactory validationStringency(final ValidationStringency validationStringency);
@@ -117,6 +121,7 @@ public abstract class SamReaderFactory {
         private SAMRecordFactory samRecordFactory;
         private CustomReaderFactory customReaderFactory;
         private ReferenceSource referenceSource;
+        private boolean async;
 
         private SamReaderFactoryImpl(final EnumSet<Option> enabledOptions, final ValidationStringency validationStringency, final SAMRecordFactory samRecordFactory) {
             this.enabledOptions = EnumSet.copyOf(enabledOptions);
@@ -124,7 +129,7 @@ public abstract class SamReaderFactory {
             this.validationStringency = validationStringency;
             this.customReaderFactory = CustomReaderFactory.getInstance();
         }
-   
+
         @Override
         public SamReader open(final File file) {
             final SamInputResource r = SamInputResource.of(file);
@@ -236,7 +241,7 @@ public abstract class SamReaderFactory {
                                 bufferedIndexStream,
                                 false,
                                 validationStringency,
-                                this.samRecordFactory
+                                this.samRecordFactory, this.async
                         );
                     } else {
                         throw new SAMFormatException("Unrecognized file format: " + data.asUnbufferedSeekableStream());
@@ -252,13 +257,13 @@ public abstract class SamReaderFactory {
                     if (SamStreams.isBAMFile(bufferedStream)) {
                         if (sourceFile == null || !sourceFile.isFile()) {
                             // Handle case in which file is a named pipe, e.g. /dev/stdin or created by mkfifo
-                            primitiveSamReader = new BAMFileReader(bufferedStream, indexFile, false, validationStringency, this.samRecordFactory);
+                            primitiveSamReader = new BAMFileReader(bufferedStream, indexFile, false, validationStringency, this.samRecordFactory, this.async);
                         } else {
                             bufferedStream.close();
-                            primitiveSamReader = new BAMFileReader(sourceFile, indexFile, false, validationStringency, this.samRecordFactory);
+                            primitiveSamReader = new BAMFileReader(sourceFile, indexFile, false, validationStringency, this.samRecordFactory, this.async);
                         }
                     } else if (BlockCompressedInputStream.isValidFile(bufferedStream)) {
-                        primitiveSamReader = new SAMTextReader(new BlockCompressedInputStream(bufferedStream), validationStringency, this.samRecordFactory);
+                        primitiveSamReader = new SAMTextReader(new BlockCompressedInputStream(bufferedStream, this.async), validationStringency, this.samRecordFactory);
                     } else if (SamStreams.isGzippedSAMFile(bufferedStream)) {
                         primitiveSamReader = new SAMTextReader(new GZIPInputStream(bufferedStream), validationStringency, this.samRecordFactory);
                     } else if (SamStreams.isCRAMFile(bufferedStream)) {
@@ -294,6 +299,17 @@ public abstract class SamReaderFactory {
 
         public static SamReaderFactory copyOf(final SamReaderFactoryImpl target) {
             return new SamReaderFactoryImpl(target.enabledOptions, target.validationStringency, target.samRecordFactory);
+        }
+
+        @Override
+        public SamReaderFactory async(boolean value) {
+            this.async = value;
+            return this;
+        }
+
+        @Override
+        public SamReaderFactory async() {
+            return async(true);
         }
     }
 

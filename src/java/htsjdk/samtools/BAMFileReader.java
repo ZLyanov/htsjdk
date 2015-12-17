@@ -98,11 +98,12 @@ class BAMFileReader extends SamReader.ReaderImplementation {
                   final File indexFile,
                   final boolean eagerDecode,
                   final ValidationStringency validationStringency,
-                  final SAMRecordFactory factory)
+                  final SAMRecordFactory factory,
+                  final boolean async)
         throws IOException {
         mIndexFile = indexFile;
         mIsSeekable = false;
-        mCompressedInputStream = new BlockCompressedInputStream(stream);
+        mCompressedInputStream = new BlockCompressedInputStream(stream, async);
         mStream = new BinaryCodec(new DataInputStream(mCompressedInputStream));
         this.eagerDecode = eagerDecode;
         this.mValidationStringency = validationStringency;
@@ -120,9 +121,10 @@ class BAMFileReader extends SamReader.ReaderImplementation {
                   final File indexFile,
                   final boolean eagerDecode,
                   final ValidationStringency validationStringency,
-                  final SAMRecordFactory factory)
+                  final SAMRecordFactory factory,
+                  final boolean async)
         throws IOException {
-        this(new BlockCompressedInputStream(file), indexFile!=null ? indexFile : SamFiles.findIndex(file), eagerDecode, file.getAbsolutePath(), validationStringency, factory);
+        this(new BlockCompressedInputStream(file, async), indexFile!=null ? indexFile : SamFiles.findIndex(file), eagerDecode, file.getAbsolutePath(), validationStringency, factory);
         if (mIndexFile != null && mIndexFile.lastModified() < file.lastModified()) {
             System.err.println("WARNING: BAM index file " + mIndexFile.getAbsolutePath() +
                     " is older than BAM " + file.getAbsolutePath());
@@ -135,18 +137,20 @@ class BAMFileReader extends SamReader.ReaderImplementation {
                   final File indexFile,
                   final boolean eagerDecode,
                   final ValidationStringency validationStringency,
-                  final SAMRecordFactory factory)
+                  final SAMRecordFactory factory,
+                  final boolean async)
         throws IOException {
-        this(new BlockCompressedInputStream(strm), indexFile, eagerDecode, strm.getSource(), validationStringency, factory);
+        this(new BlockCompressedInputStream(strm, async), indexFile, eagerDecode, strm.getSource(), validationStringency, factory);
     }
 
     BAMFileReader(final SeekableStream strm,
                   final SeekableStream indexStream,
                   final boolean eagerDecode,
                   final ValidationStringency validationStringency,
-                  final SAMRecordFactory factory)
+                  final SAMRecordFactory factory,
+                  final boolean async)
         throws IOException {
-        this(new BlockCompressedInputStream(strm), indexStream, eagerDecode, strm.getSource(), validationStringency, factory);
+        this(new BlockCompressedInputStream(strm, async), indexStream, eagerDecode, strm.getSource(), validationStringency, factory);
     }
 
     private BAMFileReader(final BlockCompressedInputStream compressedInputStream,
@@ -165,7 +169,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
         this.samRecordFactory = factory;
         this.mFileHeader = readHeader(this.mStream, this.mValidationStringency, source);
         mFirstRecordPointer = mCompressedInputStream.getFilePointer();
-    }    
+    }
 
     private BAMFileReader(final BlockCompressedInputStream compressedInputStream,
                           final SeekableStream indexStream,
@@ -187,7 +191,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
 
     /** Reads through the header and sequence records to find the virtual file offset of the first record in the BAM file. */
     static long findVirtualOffsetOfFirstRecord(final File bam) throws IOException {
-        final BAMFileReader reader = new BAMFileReader(bam, null, false, ValidationStringency.SILENT, new DefaultSAMRecordFactory());
+        final BAMFileReader reader = new BAMFileReader(bam, null, false, ValidationStringency.SILENT, new DefaultSAMRecordFactory(), false);
         final long offset = reader.mFirstRecordPointer;
         reader.close();
         return offset;
@@ -197,6 +201,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
      * If true, writes the source of every read into the source SAMRecords.
      * @param enabled true to write source information into each SAMRecord.
      */
+    @Override
     void enableFileSource(final SamReader reader, final boolean enabled) {
         this.mReader = enabled ? reader : null;
     }
@@ -205,6 +210,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
      * If true, uses the caching version of the index reader.
      * @param enabled true to write source information into each SAMRecord.
      */
+    @Override
     protected void enableIndexCaching(final boolean enabled) {
         if(mIndex != null)
             throw new SAMException("Unable to turn on index caching; index file has already been loaded.");
@@ -216,6 +222,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
      * This is slower but more scalable when accessing large numbers of BAM files sequentially.
      * @param enabled True to use memory mapping, false to use regular I/O.
      */
+    @Override
     protected void enableIndexMemoryMapping(final boolean enabled) {
         if (mIndex != null) {
             throw new SAMException("Unable to change index memory mapping; index file has already been loaded.");
@@ -237,6 +244,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
     /**
      * @return true if ths is a BAM file, and has an index
      */
+    @Override
     public boolean hasIndex() {
         return mIsSeekable && ((mIndexFile != null) || (mIndexStream != null));
     }
@@ -245,6 +253,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
      * Retrieves the index for the given file type.  Ensure that the index is of the specified type.
      * @return An index of the given type.
      */
+    @Override
     public BAMIndex getIndex() {
         if(!hasIndex())
             throw new SAMException("No index is available for this BAM file.");
@@ -260,7 +269,8 @@ class BAMFileReader extends SamReader.ReaderImplementation {
     }
 
     public void setEagerDecode(final boolean desired) { this.eagerDecode = desired; }
-    
+
+    @Override
     public void close() {
         if (mStream != null) {
             mStream.close();
@@ -271,8 +281,21 @@ class BAMFileReader extends SamReader.ReaderImplementation {
         mStream = null;
         mFileHeader = null;
         mIndex = null;
+
+        if (mCurrentIterator != null) {
+            mCurrentIterator.close();
+        }
+
+        if (mCompressedInputStream != null) {
+            try {
+                mCompressedInputStream.close();
+            } catch (IOException e) {
+                throw new RuntimeIOException(e);
+            }
+        }
     }
 
+    @Override
     public SAMFileHeader getFileHeader() {
         return mFileHeader;
     }
@@ -280,10 +303,12 @@ class BAMFileReader extends SamReader.ReaderImplementation {
     /**
      * Set error-checking level for subsequent SAMRecord reads.
      */
+    @Override
     void setValidationStringency(final ValidationStringency validationStringency) {
         this.mValidationStringency = validationStringency;
     }
 
+    @Override
     public ValidationStringency getValidationStringency() {
         return this.mValidationStringency;
     }
@@ -296,6 +321,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
      * getIterator() begins its iteration where the last one left off.  That is the best that can be
      * done in that situation.
      */
+    @Override
     public CloseableIterator<SAMRecord> getIterator() {
         if (mStream == null) {
             throw new IllegalStateException("File reader is closed");
@@ -400,6 +426,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
      * @return Iterator for the matching SAMRecords
      * @see QueryInterval#optimizeIntervals(QueryInterval[])
      */
+    @Override
     public CloseableIterator<SAMRecord> query(final QueryInterval[] intervals, final boolean contained) {
         if (mStream == null) {
             throw new IllegalStateException("File reader is closed");
@@ -430,6 +457,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
      * @param start Alignment start sought.
      * @return Iterator for the matching SAMRecords.
      */
+    @Override
     public CloseableIterator<SAMRecord> queryAlignmentStart(final String sequence, final int start) {
         if (mStream == null) {
             throw new IllegalStateException("File reader is closed");
@@ -456,6 +484,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
      *
      * @return Iterator for the matching SAMRecords.
      */
+    @Override
     public CloseableIterator<SAMRecord> queryUnmapped() {
         if (mStream == null) {
             throw new IllegalStateException("File reader is closed");
@@ -558,6 +587,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
 
         private boolean isClosed = false;
 
+        @Override
         public void close() {
             if (!isClosed) {
                 if (mCurrentIterator != null && this != mCurrentIterator) {
@@ -572,6 +602,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
             if (isClosed) throw new AssertionError("Iterator has been closed");
         }
 
+        @Override
         public void remove() {
             throw new UnsupportedOperationException("Not supported: remove");
         }
@@ -618,11 +649,13 @@ class BAMFileReader extends SamReader.ReaderImplementation {
             }
         }
 
+        @Override
         public boolean hasNext() {
             assertOpen();
             return (mNextRecord != null);
         }
 
+        @Override
         public SAMRecord next() {
             assertOpen();
             final SAMRecord result = mNextRecord;
@@ -764,6 +797,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
             advance();
         }
 
+        @Override
         SAMRecord getNextRecord()
             throws IOException {
             // Advance to next file block if necessary
@@ -806,6 +840,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
         /**
          * Returns true if a next element exists; false otherwise.
          */
+        @Override
         public boolean hasNext() {
             assertOpen();
             return mNextRecord != null;
@@ -815,6 +850,7 @@ class BAMFileReader extends SamReader.ReaderImplementation {
          * Gets the next record from the given iterator.
          * @return The next SAM record in the iterator.
          */
+        @Override
         public SAMRecord next() {
             if(!hasNext())
                 throw new NoSuchElementException("BAMQueryFilteringIterator: no next element available");

@@ -1,0 +1,55 @@
+apply plugin: "java"
+apply plugin: 'maven-publish'
+
+group = 'com.github.samtools'
+version = "1.140.m_EstimateLibraryComplexity-SNAPSHOT"
+
+targetCompatibility = "1.7"
+sourceCompatibility = "1.7"
+
+repositories {
+    mavenCentral()
+}
+
+sourceSets {
+    main {
+        java.srcDir('src/java')
+    }
+    test{
+        java.srcDir('src/tests/java')
+        resources.srcDir('testdata')
+    }
+}
+
+dependencies {
+    compile fileTree(dir: 'lib', includes: [ 
+            'apache-ant-1.8.2-bzip2.jar', 
+            'commons-compress-1.4.1.jar', 
+            'commons-jexl-2.1.1.jar', 
+            'snappy-java-1.0.3-rc3.jar'])
+    testCompile 'org.testng:testng:6.9.9'
+    testRuntime files('lib/commons-logging-1.1.1.jar')
+}
+
+test {
+    useTestNG {
+        excludeGroups = ['slow', 'broken']
+    }
+    testLogging.showStandardStreams = false
+}
+
+task sourceJar(type: Jar) {
+    from sourceSets.main.allJava
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            artifact sourceJar {
+                classifier "sources"
+            }
+        }
+    }
+}
+
