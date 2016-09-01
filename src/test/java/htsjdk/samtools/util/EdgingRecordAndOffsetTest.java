@@ -33,6 +33,12 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotSame;
 
+/**
+ * 
+ * @author Mariia_Zueva@epam.com, EPAM Systems, Inc. <www.epam.com>
+ *
+ */
+
 public class EdgingRecordAndOffsetTest {
     private final byte[] qualities = {30, 50, 50, 60, 60, 70 ,70, 70, 80, 90};
     private final byte[] bases = {'A', 'C', 'G', 'T', 'A', 'C', 'G', 'T', 'T', 'C'};

@@ -39,6 +39,9 @@ import static htsjdk.samtools.util.EdgingRecordAndOffset.Type.END;
  * as for each alignment block two objects of <code>EdgingRecordAndOffset</code> are created with two different types.
  * The main idea of using EdgeReadIterator is to process alignment block starting from locus where BEGIN type occurs,
  * aggregate information per locus and keep it until END type occurs, then remove alignment block from consideration.
+ * 
+ * @author Darina_Nikolaeva@epam.com, EPAM Systems, Inc. <www.epam.com>
+ * 
  */
 public class EdgingRecordAndOffset extends AbstractRecordAndOffset {
     /**

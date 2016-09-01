@@ -32,6 +32,9 @@ import htsjdk.samtools.SAMSequenceRecord;
 
 /**
  * Common template for testing classes, that extend AbstractLocusIterator.
+ * 
+ * @author Mariia_Zueva@epam.com, EPAM Systems, Inc. <www.epam.com>
+ * 
  */
 public abstract class AbstractLocusIteratorTestTemplate {
 

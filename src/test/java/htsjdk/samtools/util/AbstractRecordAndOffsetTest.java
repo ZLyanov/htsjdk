@@ -30,6 +30,12 @@ import org.testng.annotations.Test;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 
+/**
+ * 
+ * @author Mariia_Zueva@epam.com, EPAM Systems, Inc. <www.epam.com>
+ *
+ */
+
 public class AbstractRecordAndOffsetTest {
 
     private final byte[] qualities = {30, 40, 50, 60, 70, 80 ,90, 70, 80, 90};

@@ -36,6 +36,9 @@ import java.util.List;
  * If <code>RecordAndOffset</code> class is used, one object represents one aligned read that overlaps the locus.
  * If <code>TypedRecordAndOffset</code> class is used, one object represents one aligned read,
  * that starts or ends at the locus.
+ *
+ * @author Darina_Nikolaeva@epam.com, EPAM Systems, Inc. <www.epam.com>
+ *
  */
 public class AbstractLocusInfo<E extends AbstractRecordAndOffset> implements Locus {
     /**

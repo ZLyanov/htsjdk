@@ -52,6 +52,8 @@ import java.util.List;
  * via setSamFilters().
  *
  * @author alecw@broadinstitute.org
+ * @author Darina_Nikolaeva@epam.com, EPAM Systems, Inc. <www.epam.com>
+ * 
  */
 
 public abstract class AbstractLocusIterator<T extends AbstractRecordAndOffset, K extends AbstractLocusInfo<T>> implements Iterable<K>, CloseableIterator<K> {

@@ -21,6 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 package htsjdk.samtools.util;
 
 import htsjdk.samtools.SAMFileHeader;
@@ -30,6 +31,10 @@ import org.testng.annotations.BeforeTest;
 import org.testng.annotations.Test;
 
 import static org.junit.Assert.assertEquals;
+
+/**
+ * @author Mariia_Zueva@epam.com, EPAM Systems, Inc. <www.epam.com>
+ */
 
 public class AbstractLocusInfoTest {
     private final byte[] qualities = {30, 50, 50, 60, 60, 70, 70, 70, 80, 90, 30, 50, 50, 60, 60, 70, 70, 70, 80, 90};

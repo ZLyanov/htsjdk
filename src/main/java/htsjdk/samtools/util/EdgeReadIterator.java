@@ -36,6 +36,9 @@ import htsjdk.samtools.SamReader;
  * By default duplicate reads and non-primary alignments are filtered out.  Filtering may be changed
  * via setSamFilters(). Difference from SamLocusIterator is that this implementation accumulates data
  * only about start and end of alignment blocks from reads, not about each aligned base.
+ * 
+ * @author Darina_Nikolaeva@epam.com, EPAM Systems, Inc. <www.epam.com>
+ * 
  */
 public class EdgeReadIterator extends AbstractLocusIterator<EdgingRecordAndOffset, AbstractLocusInfo<EdgingRecordAndOffset>> {
 

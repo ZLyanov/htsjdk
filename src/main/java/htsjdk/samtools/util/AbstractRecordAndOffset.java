@@ -31,6 +31,9 @@ import htsjdk.samtools.SAMRecord;
  * to the base and quality at the genomic position described the containing AbstractLocusInfo. One object represents
  * one base for <code>SamLocusIterator.RecordAndOffset</code> implementation or one alignment block of
  * <code>SAMRecord</code> for <code>TypedRecordAndOffset</code> implementation.
+ * 
+ * @author Darina_Nikolaeva@epam.com, EPAM Systems, Inc. <www.epam.com>
+ * 
  */
 public class AbstractRecordAndOffset {
 
