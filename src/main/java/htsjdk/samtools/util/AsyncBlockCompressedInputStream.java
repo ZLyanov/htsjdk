@@ -90,6 +90,9 @@ public class AsyncBlockCompressedInputStream
 
 	Runnable orderNextBlock = () -> {
 		synchronized (service) {
+			if (mResult.remainingCapacity() == 0) {
+				return;
+			}
 			mResult.offer(
 					CompletableFuture.supplyAsync(fetchNextBlock, service));
 		}
@@ -108,8 +111,10 @@ public class AsyncBlockCompressedInputStream
 
 		CompletableFuture<DecompressedBlock> nextBlockFuture;
 
-		while ((nextBlockFuture = mResult.poll()) == null) {
-			orderNextBlock.run();
+		synchronized (service) {
+			while ((nextBlockFuture = mResult.poll()) == null) {
+				orderNextBlock.run();
+			}
 		}
 
 		nextBlockFuture.thenRunAsync(orderNextBlock, service);
