@@ -47,124 +47,124 @@ import htsjdk.samtools.seekablestream.SeekableStream;
  * an instance concurrently, it must be synchronized externally.
  */
 public class AsyncBlockCompressedInputStream
-		extends BlockCompressedInputStream {
-	private static final int READ_AHEAD_BUFFERS = (int) Math
-			.ceil(Defaults.NON_ZERO_BUFFER_SIZE
-					/ BlockCompressedStreamConstants.MAX_COMPRESSED_BLOCK_SIZE);
+        extends BlockCompressedInputStream {
+    private static final int READ_AHEAD_BUFFERS = (int) Math
+            .ceil(Defaults.NON_ZERO_BUFFER_SIZE
+                    / BlockCompressedStreamConstants.MAX_COMPRESSED_BLOCK_SIZE);
 
-	private final BlockingQueue<byte[]> freeBuffers = new ArrayBlockingQueue<>(
-			READ_AHEAD_BUFFERS);
+    private final BlockingQueue<byte[]> freeBuffers = new ArrayBlockingQueue<>(
+            READ_AHEAD_BUFFERS);
 
-	private BlockingQueue<CompletableFuture<DecompressedBlock>> mResult = new ArrayBlockingQueue<>(
-			READ_AHEAD_BUFFERS);
+    private BlockingQueue<CompletableFuture<DecompressedBlock>> mResult = new ArrayBlockingQueue<>(
+            READ_AHEAD_BUFFERS);
 
-	public AsyncBlockCompressedInputStream(final InputStream stream) {
-		super(stream, true);
-	}
+    public AsyncBlockCompressedInputStream(final InputStream stream) {
+        super(stream, true);
+    }
 
-	public AsyncBlockCompressedInputStream(final File file) throws IOException {
-		super(file);
-	}
+    public AsyncBlockCompressedInputStream(final File file) throws IOException {
+        super(file);
+    }
 
-	public AsyncBlockCompressedInputStream(final URL url) {
-		super(url);
-	}
+    public AsyncBlockCompressedInputStream(final URL url) {
+        super(url);
+    }
 
-	public AsyncBlockCompressedInputStream(final SeekableStream strm) {
-		super(strm);
-	}
+    public AsyncBlockCompressedInputStream(final SeekableStream strm) {
+        super(strm);
+    }
 
-	@Override
-	protected DecompressedBlock nextBlock(byte[] bufferAvailableForReuse) {
-		if (bufferAvailableForReuse != null) {
-			freeBuffers.offer(bufferAvailableForReuse);
-		}
-		return nextBlockSync();
-	}
+    @Override
+    protected DecompressedBlock nextBlock(byte[] bufferAvailableForReuse) {
+        if (bufferAvailableForReuse != null) {
+            freeBuffers.offer(bufferAvailableForReuse);
+        }
+        return nextBlockSync();
+    }
 
-	Supplier<DecompressedBlock> fetchNextBlock = () -> {
-		return processNextBlock(freeBuffers.poll());
-	};
+    Supplier<DecompressedBlock> fetchNextBlock = () -> {
+        return processNextBlock(freeBuffers.poll());
+    };
 
-	SerialExecutor service = new SerialExecutor(ForkJoinPool.commonPool());
+    SerialExecutor service = new SerialExecutor(ForkJoinPool.commonPool());
 
-	Runnable orderNextBlock = () -> {
-		synchronized (service) {
-			if (mResult.remainingCapacity() == 0) {
-				return;
-			}
-			mResult.offer(
-					CompletableFuture.supplyAsync(fetchNextBlock, service));
-		}
-	};
+    Runnable orderNextBlock = () -> {
+        synchronized (service) {
+            if (mResult.remainingCapacity() == 0) {
+                return;
+            }
+            mResult.offer(
+                    CompletableFuture.supplyAsync(fetchNextBlock, service));
+        }
+    };
 
-	@Override
-	protected void prepareForSeek() {
-		synchronized (service) {
-			mResult.clear();
-			service.clear();
-			super.prepareForSeek();
-		}
-	}
+    @Override
+    protected void prepareForSeek() {
+        synchronized (service) {
+            mResult.clear();
+            service.clear();
+            super.prepareForSeek();
+        }
+    }
 
-	private DecompressedBlock nextBlockSync() {
+    private DecompressedBlock nextBlockSync() {
 
-		CompletableFuture<DecompressedBlock> nextBlockFuture;
+        CompletableFuture<DecompressedBlock> nextBlockFuture;
 
-		synchronized (service) {
-			while ((nextBlockFuture = mResult.poll()) == null) {
-				orderNextBlock.run();
-			}
-		}
+        synchronized (service) {
+            while ((nextBlockFuture = mResult.poll()) == null) {
+                orderNextBlock.run();
+            }
+        }
 
-		nextBlockFuture.thenRunAsync(orderNextBlock, service);
-		return nextBlockFuture.join();
+        nextBlockFuture.thenRunAsync(orderNextBlock, service);
+        return nextBlockFuture.join();
 
-	}
+    }
 
-	@Override
-	public void close() throws IOException {
-		synchronized (service) {
-			mResult.clear();
-			service.clear();
-			super.close();
-		}
-	}
+    @Override
+    public void close() throws IOException {
+        synchronized (service) {
+            mResult.clear();
+            service.clear();
+            super.close();
+        }
+    }
 
 }
 
 class SerialExecutor implements Executor {
-	final Queue<Runnable> tasks = new ArrayDeque<Runnable>();
-	final Executor executor;
-	Runnable active;
+    final Queue<Runnable> tasks = new ArrayDeque<Runnable>();
+    final Executor executor;
+    Runnable active;
 
-	SerialExecutor(Executor executor) {
-		this.executor = executor;
-	}
+    SerialExecutor(Executor executor) {
+        this.executor = executor;
+    }
 
-	public synchronized void execute(final Runnable r) {
-		tasks.offer(new Runnable() {
-			public void run() {
-				try {
-					r.run();
-				} finally {
-					scheduleNext();
-				}
-			}
-		});
-		if (active == null) {
-			scheduleNext();
-		}
-	}
+    public synchronized void execute(final Runnable r) {
+        tasks.offer(new Runnable() {
+            public void run() {
+                try {
+                    r.run();
+                } finally {
+                    scheduleNext();
+                }
+            }
+        });
+        if (active == null) {
+            scheduleNext();
+        }
+    }
 
-	synchronized public void clear() {
-		tasks.clear();
-		active = null;
-	}
+    synchronized public void clear() {
+        tasks.clear();
+        active = null;
+    }
 
-	protected synchronized void scheduleNext() {
-		if ((active = tasks.poll()) != null) {
-			executor.execute(active);
-		}
-	}
+    protected synchronized void scheduleNext() {
+        if ((active = tasks.poll()) != null) {
+            executor.execute(active);
+        }
+    }
 }
